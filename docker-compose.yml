@@ -1,0 +1,17 @@
+services:
+  api:
+    build: .
+    image: availability-api:latest
+    ports:
+      - "${HOST_PORT:-8000}:8000"
+    environment:
+      # 容器内监听端口；宿主机映射端口由 HOST_PORT 控制
+      APP_PORT: "8000"
+      TZ: "UTC"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
