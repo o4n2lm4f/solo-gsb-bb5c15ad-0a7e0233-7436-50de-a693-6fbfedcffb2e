@@ -8,6 +8,11 @@ services:
       # 容器内监听端口；宿主机映射端口由 HOST_PORT 控制
       APP_PORT: "8000"
       TZ: "UTC"
+      # 预约 SQLite 数据库路径；落在命名卷中，容器重建后数据保留。
+      # 首次启动时应用会自动建库建表，无需手工初始化。
+      RESERVATION_DB_PATH: "${RESERVATION_DB_PATH:-/data/reservations.db}"
+    volumes:
+      - reservation-data:/data
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')"]
@@ -15,3 +20,6 @@ services:
       timeout: 3s
       retries: 3
       start_period: 5s
+
+volumes:
+  reservation-data:

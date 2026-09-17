@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date, time
+from datetime import date, datetime, time, timezone
 from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -103,3 +103,70 @@ class AggregationResponse(BaseModel):
     meeting_minutes: int
     min_attendees: int
     segments: list[SegmentOut]
+
+
+# ------------------------------------------------------------ 会议预约
+
+class ReservationRequest(BaseModel):
+    """会议预约请求。
+
+    - ``start_utc`` / ``end_utc`` 必须携带时区偏移（naive 时间一律拒绝），
+      内部统一归一化到 UTC 比较，因此 ``Z`` 与 ``+00:00`` 等价；
+    - 结束时刻必须严格晚于开始时刻；
+    - 参与者 ID 自动去重并按字典序排列，作为幂等比较与占用写入的规范化形式。
+    """
+
+    request_id: str = Field(
+        min_length=1,
+        description="客户端幂等键；同键重试返回原预约，同键不同内容返回 409",
+        examples=["req-20260309-001"],
+    )
+    start_utc: datetime = Field(
+        description="会议开始时刻（必须含时区偏移，如 2026-03-09T13:00:00Z）",
+        examples=["2026-03-09T13:00:00Z"],
+    )
+    end_utc: datetime = Field(
+        description="会议结束时刻（必须晚于开始）",
+        examples=["2026-03-09T14:00:00Z"],
+    )
+    participant_ids: list[str] = Field(
+        min_length=1,
+        description="参与者 ID 列表；重复 ID 会被去重，最终按字典序排列",
+        examples=[["alice", "bob"]],
+    )
+
+    @field_validator("start_utc", "end_utc")
+    @classmethod
+    def _aware_utc(cls, v: datetime) -> datetime:
+        if v.tzinfo is None or v.utcoffset() is None:
+            raise ValueError("timestamps must include a timezone offset (use UTC 'Z' suffix)")
+        return v.astimezone(timezone.utc)
+
+    @field_validator("participant_ids")
+    @classmethod
+    def _nonempty_participant(cls, v: list[str]) -> list[str]:
+        if any(not pid or not pid.strip() for pid in v):
+            raise ValueError("participant ids must be non-empty strings")
+        return v
+
+    @model_validator(mode="after")
+    def _validate(self) -> "ReservationRequest":
+        if self.end_utc <= self.start_utc:
+            raise ValueError("end_utc must be strictly after start_utc")
+        return self
+
+    @property
+    def normalized_participant_ids(self) -> tuple[str, ...]:
+        return tuple(sorted(set(self.participant_ids)))
+
+
+class ReservationResponse(BaseModel):
+    id: str = Field(description="预约 ID", examples=["res_8f14c2a0e93c4e7f9b6d1a2c3e4f5061"])
+    request_id: str
+    start_utc: str = Field(description="UTC 开始时间 ISO 8601（Z 后缀）")
+    end_utc: str
+    participant_ids: list[str] = Field(description="去重并按字典序排列的参与者 ID")
+    participant_count: int
+    status: Literal["created", "replayed"] = Field(
+        description="created=新建预约；replayed=同 request_id 同内容的幂等重试"
+    )

@@ -3,3 +3,9 @@ __pycache__/
 *.pyc
 .pytest_cache/
 .env
+
+# SQLite 预约数据库及其 WAL/SHM 附属文件
+data/
+*.db
+*.db-wal
+*.db-shm
