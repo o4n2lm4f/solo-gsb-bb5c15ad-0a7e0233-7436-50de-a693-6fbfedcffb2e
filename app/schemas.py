@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date, time
+from datetime import date, datetime, time, timezone
 from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -103,3 +103,58 @@ class AggregationResponse(BaseModel):
     meeting_minutes: int
     min_attendees: int
     segments: list[SegmentOut]
+
+
+class ReservationIn(BaseModel):
+    """会议预约请求：幂等创建，参与者区间占用检查。"""
+
+    request_id: str = Field(
+        min_length=1, max_length=200,
+        description="客户端幂等请求标识；相同标识 + 相同规范化内容重试返回原预约",
+        examples=["req-9f3a"],
+    )
+    start_utc: datetime = Field(
+        description="UTC 开始时刻 ISO 8601（需带时区偏移，如 ...Z）",
+        examples=["2026-03-09T13:00:00Z"],
+    )
+    end_utc: datetime = Field(
+        description="UTC 结束时刻，必须晚于开始时刻",
+        examples=["2026-03-09T14:00:00Z"],
+    )
+    participant_ids: list[str] = Field(
+        min_length=1,
+        description="参与者 ID 列表；去重排序后存储并参与幂等比较",
+        examples=[["alice", "bob"]],
+    )
+
+    @field_validator("start_utc", "end_utc")
+    @classmethod
+    def _require_aware(cls, v: datetime) -> datetime:
+        if v.tzinfo is None or v.utcoffset() is None:
+            raise ValueError(
+                "timestamp must include a timezone offset (e.g. 2026-03-09T13:00:00Z)"
+            )
+        # 统一换算到 UTC，等价偏移（如 +09:00）视为同一时刻
+        return v.astimezone(timezone.utc)
+
+    @field_validator("participant_ids")
+    @classmethod
+    def _validate_ids(cls, v: list[str]) -> list[str]:
+        if any(not pid.strip() for pid in v):
+            raise ValueError("participant ids must be non-empty")
+        return v
+
+    @model_validator(mode="after")
+    def _validate(self) -> "ReservationIn":
+        if self.end_utc <= self.start_utc:
+            raise ValueError("end_utc must be later than start_utc")
+        return self
+
+
+class ReservationOut(BaseModel):
+    reservation_id: int
+    request_id: str
+    start_utc: str = Field(description="UTC 开始时间 ISO 8601", examples=["2026-03-09T13:00:00Z"])
+    end_utc: str
+    participants: list[str] = Field(description="参与者 id，去重后按字典序排列")
+    created_at: str
